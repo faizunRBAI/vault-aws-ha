@@ -700,7 +700,12 @@ resource "aws_autoscaling_group" "vault" {
   vpc_zone_identifier = aws_subnet.private[*].id
   target_group_arns   = [aws_lb_target_group.vault.arn]
 
-  health_check_type         = "ELB"
+  # EC2 health check: only tests instance running state, not app health.
+  # Using EC2 here because Vault is installed AFTER provision by Ansible —
+  # ELB health checks would time out before the app is configured.
+  # After Ansible completes, steady-state unhealthy instances are replaced
+  # by the ASG on the next EC2 health check cycle.
+  health_check_type         = "EC2"
   health_check_grace_period = 300
 
   launch_template {

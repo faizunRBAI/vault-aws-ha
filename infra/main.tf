@@ -68,7 +68,7 @@ resource "aws_eip" "nat" {
   depends_on = [aws_internet_gateway.main]
 }
 
-# NAT gateways — one per AZ for AZ-redundant egress
+# NAT gateways - one per AZ for AZ-redundant egress
 resource "aws_nat_gateway" "main" {
   count         = length(var.availability_zones)
   allocation_id = aws_eip.nat[count.index].id
@@ -79,7 +79,7 @@ resource "aws_nat_gateway" "main" {
   depends_on = [aws_internet_gateway.main]
 }
 
-# Route table: public subnets → IGW
+# Route table: public subnets -> IGW
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -97,7 +97,7 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# Route tables: private subnets → NAT gateways
+# Route tables: private subnets -> NAT gateways
 resource "aws_route_table" "private" {
   count  = length(var.availability_zones)
   vpc_id = aws_vpc.main.id
@@ -120,7 +120,7 @@ resource "aws_route_table_association" "private" {
 # Security Groups
 # ---------------------------------------------------------------------------
 
-# ALB security group — accepts HTTPS from trusted CIDR
+# ALB security group - accepts HTTPS from trusted CIDR
 resource "aws_security_group" "alb" {
   name        = "${var.project_name}-alb-sg"
   description = "Allow HTTPS inbound from trusted sources"
@@ -145,7 +145,7 @@ resource "aws_security_group" "alb" {
   tags = { Name = "${var.project_name}-alb-sg" }
 }
 
-# Bastion security group — SSH from trusted CIDR
+# Bastion security group - SSH from trusted CIDR
 resource "aws_security_group" "bastion" {
   name        = "${var.project_name}-bastion-sg"
   description = "Allow SSH inbound from trusted sources"
@@ -170,7 +170,7 @@ resource "aws_security_group" "bastion" {
   tags = { Name = "${var.project_name}-bastion-sg" }
 }
 
-# Vault security group — Vault API only from ALB + bastion
+# Vault security group - Vault API only from ALB + bastion
 resource "aws_security_group" "vault" {
   name        = "${var.project_name}-vault-sg"
   description = "Vault nodes: API from ALB, SSH from bastion, cluster port internal"
@@ -193,7 +193,7 @@ resource "aws_security_group" "vault" {
   }
 
   ingress {
-    description = "Vault cluster port (HA) — internal VPC only"
+    description = "Vault cluster port HA - internal VPC only"
     from_port   = 8201
     to_port     = 8201
     protocol    = "tcp"
@@ -212,7 +212,7 @@ resource "aws_security_group" "vault" {
 }
 
 # ---------------------------------------------------------------------------
-# KMS — Vault auto-unseal CMK
+# KMS - Vault auto-unseal CMK
 # ---------------------------------------------------------------------------
 
 resource "aws_kms_key" "vault_unseal" {
@@ -259,7 +259,7 @@ resource "aws_kms_alias" "vault_unseal" {
 }
 
 # ---------------------------------------------------------------------------
-# S3 — Vault storage backend
+# S3 - Vault storage backend
 # ---------------------------------------------------------------------------
 
 resource "random_id" "bucket_suffix" {
@@ -351,7 +351,7 @@ resource "aws_s3_bucket_policy" "vault" {
 }
 
 # ---------------------------------------------------------------------------
-# DynamoDB — Vault HA lock table
+# DynamoDB - Vault HA lock table
 # ---------------------------------------------------------------------------
 
 resource "aws_dynamodb_table" "vault_ha" {
@@ -383,7 +383,7 @@ resource "aws_dynamodb_table" "vault_ha" {
 }
 
 # ---------------------------------------------------------------------------
-# IAM — Vault instance role and policies
+# IAM - Vault instance role and policies
 # ---------------------------------------------------------------------------
 
 resource "aws_iam_role" "vault" {
@@ -584,7 +584,7 @@ resource "aws_eip_association" "bastion" {
 }
 
 # ---------------------------------------------------------------------------
-# ALB — Application Load Balancer
+# ALB - Application Load Balancer
 # ---------------------------------------------------------------------------
 
 resource "aws_lb" "vault" {
@@ -637,7 +637,7 @@ resource "aws_lb_listener" "vault_https" {
 }
 
 # ---------------------------------------------------------------------------
-# Auto Scaling Group — Vault nodes
+# Auto Scaling Group - Vault nodes
 # ---------------------------------------------------------------------------
 
 resource "aws_launch_template" "vault" {
@@ -672,7 +672,7 @@ resource "aws_launch_template" "vault" {
   user_data = base64encode(<<-EOT
     #!/bin/bash
     set -e
-    # Bootstrap: install dependencies only — Ansible handles Vault install
+    # Bootstrap: install dependencies only - Ansible handles Vault install
     apt-get update -y
     apt-get install -y curl unzip python3 python3-pip awscli
     # Signal readiness for Ansible
@@ -752,7 +752,7 @@ resource "aws_autoscaling_policy" "vault_cpu" {
 }
 
 # ---------------------------------------------------------------------------
-# CloudWatch — Log groups and alarms
+# CloudWatch - Log groups and alarms
 # ---------------------------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "vault_audit" {

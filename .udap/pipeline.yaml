@@ -46,6 +46,15 @@ stages:
             -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate" \
             -backend-config="region=us-east-1"
 
+      - name: Import orphaned ALB SG into state
+        run: |
+          cd infra
+          # Import the existing ALB SG if it is not already tracked in state.
+          # 'terraform state show' exits 1 when the resource is absent; we only
+          # run import in that case. Once in state, this step is a no-op.
+          terraform state show aws_security_group.alb > /dev/null 2>&1 || \
+            terraform import -input=false aws_security_group.alb sg-087039ab8892e041d
+
       - name: Terraform Plan
         run: |
           cd infra

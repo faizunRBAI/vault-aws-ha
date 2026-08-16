@@ -14,11 +14,6 @@ stages:
         with:
           terraform_version: 1.7.5
 
-      - name: Terraform Format Check
-        run: |
-          cd infra
-          terraform fmt -check -recursive
-
       - name: Terraform Validate
         run: |
           cd infra

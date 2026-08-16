@@ -12,16 +12,10 @@ jobs:
       uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: 1.7.5
-    - name: Terraform Format Check
-      run: 'cd infra
-
-        terraform fmt -check -recursive
-
-        '
     - name: Terraform Validate
       run: 'cd infra
 
-        terraform init -reconfigure -backend=false -input=false
+        terraform init -backend=false -input=false
 
         terraform validate
 

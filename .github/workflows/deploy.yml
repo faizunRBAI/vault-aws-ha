@@ -15,7 +15,7 @@ jobs:
     - name: Terraform Validate
       run: 'cd infra
 
-        terraform init -reconfigure -backend=false -input=false
+        terraform init -backend=false -input=false
 
         terraform validate
 
@@ -47,12 +47,6 @@ jobs:
       run: "cd infra\nterraform init -input=false -reconfigure \\\n  -backend-config=\"\
         bucket=${{ secrets.TF_STATE_BUCKET }}\" \\\n  -backend-config=\"key=${{ secrets.PROJECT_NAME\
         \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\n"
-    - name: Import orphaned ALB SG into state
-      run: "cd infra\n# Import the existing ALB SG if it is not already tracked in\
-        \ state.\n# 'terraform state show' exits 1 when the resource is absent; we\
-        \ only\n# run import in that case. Once in state, this step is a no-op.\n\
-        terraform state show aws_security_group.alb > /dev/null 2>&1 || \\\n  terraform\
-        \ import -input=false aws_security_group.alb sg-087039ab8892e041d\n"
     - name: Terraform Plan
       run: 'cd infra
 

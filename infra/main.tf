@@ -309,6 +309,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "vault" {
     id     = "expire-old-versions"
     status = "Enabled"
 
+    # AWS provider v5 requires an explicit filter block; empty = apply to all objects
+    filter {}
+
     noncurrent_version_expiration {
       noncurrent_days = 90
     }
@@ -552,7 +555,8 @@ resource "aws_key_pair" "vault" {
 
 resource "aws_eip" "bastion" {
   domain = "vpc"
-  tags   = { Name = "${var.project_name}-bastion-eip" }
+
+  tags = { Name = "${var.project_name}-bastion-eip" }
 
   depends_on = [aws_internet_gateway.main]
 }
@@ -611,7 +615,7 @@ resource "aws_lb_target_group" "vault" {
     unhealthy_threshold = 3
     interval            = 30
     timeout             = 10
-    matcher             = "200,473" # 473 = Vault is uninitialized (also healthy for LB)
+    matcher             = "200,473" # 473 = Vault uninitialized (healthy for LB purposes)
   }
 
   tags = { Name = "${var.project_name}-vault-tg" }
@@ -748,7 +752,7 @@ resource "aws_autoscaling_policy" "vault_cpu" {
 }
 
 # ---------------------------------------------------------------------------
-# CloudWatch — Log group, agent, alarms
+# CloudWatch — Log groups and alarms
 # ---------------------------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "vault_audit" {

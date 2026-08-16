@@ -13,7 +13,6 @@ jobs:
       TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
       TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
       TF_VAR_vault_kms_key_alias: ${{ secrets.VAULT_KMS_KEY_ALIAS }}
-      TF_VAR_acm_certificate_arn: ${{ secrets.ACM_CERTIFICATE_ARN }}
       TF_VAR_trusted_cidr: ${{ secrets.TRUSTED_CIDR }}
     steps:
     - uses: actions/checkout@v4

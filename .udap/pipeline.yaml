@@ -31,7 +31,6 @@ stages:
       TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
       TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
       TF_VAR_vault_kms_key_alias: ${{ secrets.VAULT_KMS_KEY_ALIAS }}
-      TF_VAR_acm_certificate_arn: ${{ secrets.ACM_CERTIFICATE_ARN }}
       TF_VAR_trusted_cidr: ${{ secrets.TRUSTED_CIDR }}
     steps:
       - name: Setup Terraform
@@ -82,7 +81,6 @@ stages:
       TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
       TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
       TF_VAR_vault_kms_key_alias: ${{ secrets.VAULT_KMS_KEY_ALIAS }}
-      TF_VAR_acm_certificate_arn: ${{ secrets.ACM_CERTIFICATE_ARN }}
       TF_VAR_trusted_cidr: ${{ secrets.TRUSTED_CIDR }}
     steps:
       - name: Install Ansible and AWS deps
@@ -110,7 +108,6 @@ stages:
         id: resolve
         env:
           VAULT_ASG_NAME: ${{ needs.provision.outputs.vault_asg_name }}
-          BASTION_IP: ${{ needs.provision.outputs.bastion_ip }}
         run: |
           VAULT_IPS=$(aws ec2 describe-instances \
             --filters "Name=tag:aws:autoscaling:groupName,Values=$VAULT_ASG_NAME" \
@@ -172,7 +169,6 @@ stages:
       TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
       TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
       TF_VAR_vault_kms_key_alias: ${{ secrets.VAULT_KMS_KEY_ALIAS }}
-      TF_VAR_acm_certificate_arn: ${{ secrets.ACM_CERTIFICATE_ARN }}
       TF_VAR_trusted_cidr: ${{ secrets.TRUSTED_CIDR }}
     steps:
       - name: Setup Terraform
@@ -195,16 +191,16 @@ stages:
         env:
           ALB_DNS: ${{ steps.tf_out.outputs.alb_dns }}
         run: |
-          echo "Polling Vault API at https://$ALB_DNS/v1/sys/health ..."
+          echo "Polling Vault API at http://$ALB_DNS/v1/sys/health ..."
           curl --fail --retry 15 --retry-delay 20 --retry-all-errors \
-            -k "https://$ALB_DNS/v1/sys/health" \
+            "http://$ALB_DNS/v1/sys/health" \
             -o /dev/null -w "HTTP %{http_code}\n"
 
       - name: Check Vault seal status
         env:
           ALB_DNS: ${{ steps.tf_out.outputs.alb_dns }}
         run: |
-          STATUS=$(curl -sk "https://$ALB_DNS/v1/sys/health" | \
+          STATUS=$(curl -s "http://$ALB_DNS/v1/sys/health" | \
             python3 -c "import sys,json; d=json.load(sys.stdin); print('sealed' if d.get('sealed') else 'unsealed')")
           echo "Vault seal status: $STATUS"
 

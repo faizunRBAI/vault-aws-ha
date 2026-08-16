@@ -13,22 +13,20 @@ log_level     = "info"
 log_format    = "json"
 disable_mlock = false   # IPC_LOCK is set on the binary
 
-api_addr     = "https://{{ vault_node_ip }}:{{ vault_port_api }}"
+api_addr     = "http://{{ vault_node_ip }}:{{ vault_port_api }}"
 cluster_addr = "https://{{ vault_node_ip }}:{{ vault_port_cluster }}"
 
 # ---------------------------------------------------------------------------
-# TLS Listener — port 8200 (ALB terminates TLS externally, Vault also needs
-# TLS internally because the ALB target group protocol is HTTPS)
+# HTTP Listener — port 8200
+# ALB handles external access; Vault listens plain HTTP inside the VPC.
+# Cluster port 8201 stays HTTPS for inter-node Raft/HA communication.
 # ---------------------------------------------------------------------------
 
 listener "tcp" {
-  address       = "0.0.0.0:{{ vault_port_api }}"
-  tls_cert_file = "{{ vault_config_dir }}/vault-cert.pem"
-  tls_key_file  = "{{ vault_config_dir }}/vault-key.pem"
+  address     = "0.0.0.0:{{ vault_port_api }}"
+  tls_disable = true
 
-  tls_min_version = "tls12"
-
-  # Trust ALB forwarded-for headers (add ALB CIDR here for production)
+  # Trust ALB forwarded-for headers
   x_forwarded_for_authorized_addrs = "10.0.0.0/16"
 }
 
@@ -37,9 +35,9 @@ listener "tcp" {
 # ---------------------------------------------------------------------------
 
 storage "s3" {
-  region     = "{{ vault_aws_region }}"
-  bucket     = "{{ vault_s3_bucket }}"
-  path       = "vault/"
+  region = "{{ vault_aws_region }}"
+  bucket = "{{ vault_s3_bucket }}"
+  path   = "vault/"
 
   # HA is coordinated separately via DynamoDB (ha_storage below)
   disable_clustering = "false"
@@ -75,8 +73,3 @@ telemetry {
   disable_hostname          = false
   enable_hostname_label      = true
 }
-
-# ---------------------------------------------------------------------------
-# Service registration (optional — useful with Consul; omitted for OSS S3)
-# ---------------------------------------------------------------------------
-# service_registration "kubernetes" { ... }

@@ -120,16 +120,16 @@ resource "aws_route_table_association" "private" {
 # Security Groups
 # ---------------------------------------------------------------------------
 
-# ALB security group - accepts HTTPS from trusted CIDR
+# ALB security group - accepts HTTP from trusted CIDR
 resource "aws_security_group" "alb" {
   name        = "${var.project_name}-alb-sg"
-  description = "Allow HTTPS inbound from trusted sources"
+  description = "Allow HTTP inbound from trusted sources"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "HTTPS from trusted CIDR"
-    from_port   = 443
-    to_port     = 443
+    description = "HTTP from trusted CIDR"
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = [var.trusted_cidr]
   }
@@ -584,7 +584,7 @@ resource "aws_eip_association" "bastion" {
 }
 
 # ---------------------------------------------------------------------------
-# ALB - Application Load Balancer
+# ALB - Application Load Balancer (HTTP)
 # ---------------------------------------------------------------------------
 
 resource "aws_lb" "vault" {
@@ -602,31 +602,29 @@ resource "aws_lb" "vault" {
 resource "aws_lb_target_group" "vault" {
   name        = "${var.project_name}-vault-tg"
   port        = 8200
-  protocol    = "HTTPS"
+  protocol    = "HTTP"
   vpc_id      = aws_vpc.main.id
   target_type = "instance"
 
   health_check {
     enabled             = true
     path                = var.vault_health_check_path
-    protocol            = "HTTPS"
+    protocol            = "HTTP"
     port                = "8200"
     healthy_threshold   = 2
     unhealthy_threshold = 3
     interval            = 30
     timeout             = 10
-    matcher             = "200,473" # 473 = Vault uninitialized (healthy for LB purposes)
+    matcher             = "200,473"
   }
 
   tags = { Name = "${var.project_name}-vault-tg" }
 }
 
-resource "aws_lb_listener" "vault_https" {
+resource "aws_lb_listener" "vault_http" {
   load_balancer_arn = aws_lb.vault.arn
-  port              = 443
-  protocol          = "HTTPS"
-  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-  certificate_arn   = var.acm_certificate_arn
+  port              = 80
+  protocol          = "HTTP"
 
   default_action {
     type             = "forward"

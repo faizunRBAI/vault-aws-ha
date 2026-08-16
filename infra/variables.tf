@@ -81,13 +81,8 @@ variable "vault_kms_key_alias" {
   default     = "alias/vault-aws-ha-unseal"
 }
 
-variable "acm_certificate_arn" {
-  description = "ACM certificate ARN for the ALB HTTPS listener"
-  type        = string
-}
-
 variable "trusted_cidr" {
-  description = "Trusted CIDR block for bastion SSH and ALB HTTPS access"
+  description = "Trusted CIDR block for bastion SSH and ALB HTTP access"
   type        = string
   default     = "0.0.0.0/0"
 }

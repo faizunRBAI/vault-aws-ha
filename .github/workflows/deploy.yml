@@ -15,7 +15,7 @@ jobs:
     - name: Terraform Validate
       run: 'cd infra
 
-        terraform init -backend=false -input=false
+        terraform init -reconfigure -backend=false -input=false
 
         terraform validate
 

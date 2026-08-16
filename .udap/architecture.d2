@@ -1,0 +1,26 @@
+# udap:meta cloud=aws region=us-east-1 target=ec2
+
+vpc: AWS VPC (us-east-1) {
+  igw: Internet Gateway { shape: rectangle; udap-type: aws.ec2 }
+  alb: Application Load Balancer { shape: rectangle; udap-type: aws.alb }
+  bastion: Bastion Host (Public Subnet) { shape: rectangle; udap-type: aws.ec2 }
+  vault_asg: Vault ASG — EC2 Nodes (Private Subnets, 3 AZs) { shape: rectangle; udap-type: aws.ec2 }
+  s3: Vault S3 Storage Backend { shape: rectangle; udap-type: aws.s3 }
+  dynamo: DynamoDB HA Lock Table { shape: rectangle; udap-type: aws.rds }
+  kms: AWS KMS Auto-Unseal Key { shape: rectangle; udap-type: aws.ec2 }
+  acm: ACM TLS Certificate { shape: rectangle; udap-type: aws.ec2 }
+  iam: IAM Instance Roles (least-privilege) { shape: rectangle; udap-type: aws.ec2 }
+  cw: CloudWatch Logs + Audit { shape: rectangle; udap-type: aws.ec2 }
+}
+users: Operators / Clients { shape: person; udap-type: generic.user }
+
+users -> vpc.igw: HTTPS 443
+vpc.igw -> vpc.alb: forward
+vpc.alb -> vpc.vault_asg: Vault API :8200 (private)
+vpc.bastion -> vpc.vault_asg: SSH :22 (admin)
+vpc.vault_asg -> vpc.s3: storage backend reads/writes
+vpc.vault_asg -> vpc.dynamo: HA lock coordination
+vpc.vault_asg -> vpc.kms: auto-unseal decrypt
+vpc.vault_asg -> vpc.cw: audit logs + metrics
+vpc.acm -> vpc.alb: TLS termination
+vpc.iam -> vpc.vault_asg: instance profile

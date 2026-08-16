@@ -1,0 +1,47 @@
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "root"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "{{ vault_log_dir }}/audit.log",
+            "log_group_name": "/vault/audit",
+            "log_stream_name": "{instance_id}",
+            "timezone": "UTC",
+            "multi_line_start_pattern": "^\\{",
+            "timestamp_format": "%Y-%m-%dT%H:%M:%S"
+          },
+          {
+            "file_path": "/var/log/syslog",
+            "log_group_name": "/vault/system",
+            "log_stream_name": "{instance_id}-syslog",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  },
+  "metrics": {
+    "namespace": "VaultCluster/{{ project_name }}",
+    "metrics_collected": {
+      "cpu": {
+        "measurement": ["cpu_usage_idle", "cpu_usage_user", "cpu_usage_system"],
+        "metrics_collection_interval": 60,
+        "totalcpu": true
+      },
+      "disk": {
+        "measurement": ["used_percent", "inodes_free"],
+        "metrics_collection_interval": 60,
+        "resources": ["/", "/opt/vault"]
+      },
+      "mem": {
+        "measurement": ["mem_used_percent"],
+        "metrics_collection_interval": 60
+      }
+    }
+  }
+}

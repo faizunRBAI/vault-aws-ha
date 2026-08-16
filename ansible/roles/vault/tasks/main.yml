@@ -1,0 +1,152 @@
+---
+# vault role: install Vault binary, configure vault.hcl, manage systemd service
+
+- name: Get instance metadata — local IPv4
+  ansible.builtin.uri:
+    url: http://169.254.169.254/latest/meta-data/local-ipv4
+    method: GET
+    timeout: 5
+  register: instance_ip_result
+  no_log: false
+
+- name: Set vault_node_ip fact
+  ansible.builtin.set_fact:
+    vault_node_ip: "{{ instance_ip_result.content }}"
+
+- name: Get instance metadata — instance-id
+  ansible.builtin.uri:
+    url: http://169.254.169.254/latest/meta-data/instance-id
+    method: GET
+    timeout: 5
+  register: instance_id_result
+
+- name: Set vault_instance_id fact
+  ansible.builtin.set_fact:
+    vault_instance_id: "{{ instance_id_result.content }}"
+
+- name: Check if Vault binary exists with correct version
+  ansible.builtin.command:
+    cmd: /usr/local/bin/vault version
+  register: vault_existing_version
+  failed_when: false
+  changed_when: false
+
+- name: Download and install Vault binary
+  when: vault_version not in (vault_existing_version.stdout | default(''))
+  block:
+    - name: Download Vault zip
+      ansible.builtin.get_url:
+        url: "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_linux_amd64.zip"
+        dest: "/tmp/vault_{{ vault_version }}_linux_amd64.zip"
+        mode: "0644"
+        timeout: 120
+
+    - name: Download Vault checksum file
+      ansible.builtin.get_url:
+        url: "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_SHA256SUMS"
+        dest: "/tmp/vault_{{ vault_version }}_SHA256SUMS"
+        mode: "0644"
+        timeout: 30
+
+    - name: Verify Vault checksum
+      ansible.builtin.shell:
+        cmd: "cd /tmp && grep vault_{{ vault_version }}_linux_amd64.zip vault_{{ vault_version }}_SHA256SUMS | sha256sum -c -"
+      changed_when: false
+
+    - name: Unzip Vault binary
+      ansible.builtin.unarchive:
+        src: "/tmp/vault_{{ vault_version }}_linux_amd64.zip"
+        dest: /usr/local/bin/
+        remote_src: true
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Clean up downloaded files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/vault_{{ vault_version }}_linux_amd64.zip"
+        - "/tmp/vault_{{ vault_version }}_SHA256SUMS"
+
+- name: Set IPC_LOCK capability on Vault binary (prevent memory swapping secrets)
+  ansible.builtin.command:
+    cmd: setcap cap_ipc_lock=+ep /usr/local/bin/vault
+  changed_when: true
+
+- name: Generate self-signed TLS certificate for Vault listener
+  ansible.builtin.shell: |
+    openssl req -x509 -newkey rsa:4096 -keyout {{ vault_config_dir }}/vault-key.pem \
+      -out {{ vault_config_dir }}/vault-cert.pem -days 365 -nodes \
+      -subj "/C=US/ST=Cloud/L=Cloud/O=Vault/CN={{ vault_node_ip }}" \
+      -addext "subjectAltName=IP:{{ vault_node_ip }},IP:127.0.0.1"
+  args:
+    creates: "{{ vault_config_dir }}/vault-cert.pem"
+  changed_when: true
+
+- name: Set TLS certificate ownership
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0640"
+  loop:
+    - "{{ vault_config_dir }}/vault-cert.pem"
+    - "{{ vault_config_dir }}/vault-key.pem"
+
+- name: Write vault.hcl configuration
+  ansible.builtin.template:
+    src: vault.hcl.j2
+    dest: "{{ vault_config_dir }}/vault.hcl"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0640"
+  notify: restart vault
+
+- name: Write Vault systemd unit
+  ansible.builtin.template:
+    src: vault.service.j2
+    dest: /etc/systemd/system/vault.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart vault
+
+- name: Enable Vault service
+  ansible.builtin.systemd:
+    name: vault
+    enabled: true
+    daemon_reload: true
+
+- name: Start Vault service
+  ansible.builtin.systemd:
+    name: vault
+    state: started
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Vault listener on port 8200
+  ansible.builtin.wait_for:
+    port: "{{ vault_port_api }}"
+    host: "127.0.0.1"
+    delay: 5
+    timeout: 60
+    state: started
+
+- name: Check Vault seal status
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ vault_port_api }}/v1/sys/health"
+    method: GET
+    validate_certs: false
+    status_code: [200, 429, 472, 473, 501, 503]
+  register: vault_health
+  changed_when: false
+  failed_when: false
+
+- name: Report Vault health
+  ansible.builtin.debug:
+    msg: "Vault API responded with HTTP {{ vault_health.status }} on {{ inventory_hostname }}"

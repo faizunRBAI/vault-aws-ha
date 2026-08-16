@@ -1,0 +1,232 @@
+version: 1
+name: vault-aws-ha
+vcs: github
+
+rollback:
+  strategy: manual
+
+stages:
+  - id: lint
+    kind: lint
+    steps:
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      - name: Terraform Format Check
+        run: |
+          cd infra
+          terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: |
+          cd infra
+          terraform init -backend=false -input=false
+          terraform validate
+
+  - id: provision
+    kind: provision
+    needs: [lint]
+    timeout_minutes: 45
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
+      TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
+      TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      TF_VAR_vault_kms_key_alias: ${{ secrets.VAULT_KMS_KEY_ALIAS }}
+      TF_VAR_acm_certificate_arn: ${{ secrets.ACM_CERTIFICATE_ARN }}
+      TF_VAR_trusted_cidr: ${{ secrets.TRUSTED_CIDR }}
+    steps:
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      - name: Terraform Init
+        run: |
+          cd infra
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate" \
+            -backend-config="region=us-east-1"
+
+      - name: Terraform Plan
+        run: |
+          cd infra
+          terraform plan -input=false -out=tfplan
+
+      - name: Terraform Apply
+        id: apply
+        run: |
+          cd infra
+          terraform apply -input=false tfplan
+
+      - name: Get Outputs
+        id: outputs
+        run: |
+          cd infra
+          echo "alb_dns=$(terraform output -raw alb_dns_name)" >> "$GITHUB_OUTPUT"
+          echo "bastion_ip=$(terraform output -raw bastion_public_ip)" >> "$GITHUB_OUTPUT"
+          echo "vault_asg_name=$(terraform output -raw vault_asg_name)" >> "$GITHUB_OUTPUT"
+
+    outputs:
+      alb_dns: ${{ steps.outputs.outputs.alb_dns }}
+      bastion_ip: ${{ steps.outputs.outputs.bastion_ip }}
+      vault_asg_name: ${{ steps.outputs.outputs.vault_asg_name }}
+
+  - id: configure
+    kind: configure
+    needs: [provision]
+    timeout_minutes: 30
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
+      TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
+      TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      TF_VAR_vault_kms_key_alias: ${{ secrets.VAULT_KMS_KEY_ALIAS }}
+      TF_VAR_acm_certificate_arn: ${{ secrets.ACM_CERTIFICATE_ARN }}
+      TF_VAR_trusted_cidr: ${{ secrets.TRUSTED_CIDR }}
+    steps:
+      - name: Install Ansible and AWS deps
+        run: pip install ansible-core boto3 botocore
+
+      - name: Install required Ansible collections
+        run: |
+          ansible-galaxy collection install amazon.aws
+          ansible-galaxy collection install community.general
+
+      - name: Write SSH key
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Scan bastion known hosts
+        env:
+          BASTION_IP: ${{ needs.provision.outputs.bastion_ip }}
+        run: ssh-keyscan -H "$BASTION_IP" >> ~/.ssh/known_hosts
+
+      - name: Resolve Vault node IPs via AWS CLI
+        id: resolve
+        env:
+          VAULT_ASG_NAME: ${{ needs.provision.outputs.vault_asg_name }}
+          BASTION_IP: ${{ needs.provision.outputs.bastion_ip }}
+        run: |
+          VAULT_IPS=$(aws ec2 describe-instances \
+            --filters "Name=tag:aws:autoscaling:groupName,Values=$VAULT_ASG_NAME" \
+                      "Name=instance-state-name,Values=running" \
+            --query "Reservations[*].Instances[*].PrivateIpAddress" \
+            --output text | tr '\t' '\n')
+          echo "vault_ips<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$VAULT_IPS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Ansible inventory
+        env:
+          BASTION_IP: ${{ needs.provision.outputs.bastion_ip }}
+          VAULT_IPS: ${{ steps.resolve.outputs.vault_ips }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          bastion = os.environ['BASTION_IP']
+          vault_ips = [ip.strip() for ip in os.environ['VAULT_IPS'].split('\n') if ip.strip()]
+          user = os.environ['SSH_USER']
+          lines = [
+              '[bastion]',
+              f'{bastion} ansible_user={user} ansible_ssh_private_key_file=~/.ssh/deploy_key ansible_ssh_common_args="-o StrictHostKeyChecking=accept-new"',
+              '',
+              '[vault_servers]'
+          ]
+          for ip in vault_ips:
+              lines.append(f'{ip} ansible_user={user} ansible_ssh_private_key_file=~/.ssh/deploy_key ansible_ssh_common_args="-o StrictHostKeyChecking=accept-new -o ProxyJump={user}@{bastion}"')
+          lines += ['', '[vault_servers:vars]', 'ansible_python_interpreter=/usr/bin/python3']
+          with open('ansible/inventory.ini', 'w') as f:
+              f.write('\n'.join(lines) + '\n')
+          print("Inventory written")
+          PYEOF
+
+      - name: Run Vault configuration playbook
+        env:
+          VAULT_S3_BUCKET: ${{ secrets.VAULT_S3_BUCKET }}
+          VAULT_DYNAMO_TABLE: ${{ secrets.VAULT_DYNAMO_TABLE }}
+          VAULT_KMS_KEY_ID: ${{ secrets.VAULT_KMS_KEY_ID }}
+        run: |
+          ansible-playbook -i ansible/inventory.ini ansible/site.yml \
+            -e "vault_s3_bucket=$VAULT_S3_BUCKET" \
+            -e "vault_dynamo_table=$VAULT_DYNAMO_TABLE" \
+            -e "vault_kms_key_id=$VAULT_KMS_KEY_ID" \
+            -e "aws_region=us-east-1" \
+            -e "project_name=${{ secrets.PROJECT_NAME }}" \
+            --private-key ~/.ssh/deploy_key \
+            -v
+
+  - id: verify
+    kind: verify
+    needs: [provision, configure]
+    timeout_minutes: 10
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
+      TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
+      TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      TF_VAR_vault_kms_key_alias: ${{ secrets.VAULT_KMS_KEY_ALIAS }}
+      TF_VAR_acm_certificate_arn: ${{ secrets.ACM_CERTIFICATE_ARN }}
+      TF_VAR_trusted_cidr: ${{ secrets.TRUSTED_CIDR }}
+    steps:
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      - name: Read ALB DNS from Terraform outputs
+        id: tf_out
+        run: |
+          cd infra
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate" \
+            -backend-config="region=us-east-1"
+          ALB_DNS=$(terraform output -raw alb_dns_name)
+          echo "alb_dns=$ALB_DNS" >> "$GITHUB_OUTPUT"
+
+      - name: Health-check Vault via ALB
+        env:
+          ALB_DNS: ${{ steps.tf_out.outputs.alb_dns }}
+        run: |
+          echo "Polling Vault API at https://$ALB_DNS/v1/sys/health ..."
+          curl --fail --retry 15 --retry-delay 20 --retry-all-errors \
+            -k "https://$ALB_DNS/v1/sys/health" \
+            -o /dev/null -w "HTTP %{http_code}\n"
+
+      - name: Check Vault seal status
+        env:
+          ALB_DNS: ${{ steps.tf_out.outputs.alb_dns }}
+        run: |
+          STATUS=$(curl -sk "https://$ALB_DNS/v1/sys/health" | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); print('sealed' if d.get('sealed') else 'unsealed')")
+          echo "Vault seal status: $STATUS"
+
+destroy:
+  steps:
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.7.5
+    - name: Terraform Init
+      run: |
+        cd infra
+        terraform init -input=false -reconfigure \
+          -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+          -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate" \
+          -backend-config="region=us-east-1"
+    - name: Terraform Destroy
+      run: |
+        cd infra
+        terraform destroy -input=false -auto-approve

@@ -1,0 +1,100 @@
+---
+# common role: baseline packages, CloudWatch agent, system hardening
+
+- name: Install baseline packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - unzip
+      - jq
+      - python3
+      - python3-pip
+      - awscli
+      - ca-certificates
+      - gnupg
+      - rsyslog
+    state: present
+    update_cache: false
+  retries: 3
+  delay: 5
+
+- name: Set system timezone to UTC
+  ansible.builtin.command:
+    cmd: timedatectl set-timezone UTC
+  changed_when: true
+
+- name: Create vault system group
+  ansible.builtin.group:
+    name: "{{ vault_group }}"
+    system: true
+    state: present
+
+- name: Create vault system user
+  ansible.builtin.user:
+    name: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    system: true
+    shell: /bin/false
+    home: "{{ vault_data_dir }}"
+    create_home: false
+    state: present
+
+- name: Create required directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0750"
+  loop:
+    - "{{ vault_config_dir }}"
+    - "{{ vault_data_dir }}"
+    - "{{ vault_log_dir }}"
+
+- name: Install CloudWatch agent
+  ansible.builtin.shell: |
+    curl -fsSL -o /tmp/amazon-cloudwatch-agent.deb \
+      https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+    dpkg -i /tmp/amazon-cloudwatch-agent.deb || apt-get install -f -y
+    rm -f /tmp/amazon-cloudwatch-agent.deb
+  args:
+    creates: /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent
+  changed_when: true
+
+- name: Write CloudWatch agent config
+  ansible.builtin.template:
+    src: cloudwatch-agent.json.j2
+    dest: /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart cloudwatch agent
+
+- name: Enable and start CloudWatch agent
+  ansible.builtin.systemd:
+    name: amazon-cloudwatch-agent
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Configure sysctl — disable core dumps for vault process
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-vault-hardening.conf
+    content: |
+      # Vault security hardening
+      fs.suid_dumpable = 0
+      kernel.core_uses_pid = 1
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload sysctl
+
+- name: Limit core dumps via ulimits
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/99-vault-core.conf
+    content: |
+      vault soft core 0
+      vault hard core 0
+    owner: root
+    group: root
+    mode: "0644"

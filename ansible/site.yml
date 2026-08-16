@@ -1,0 +1,55 @@
+---
+# vault-aws-ha: Main site playbook
+# Configures Vault nodes via bastion proxy jump
+# Variables passed from CI pipeline:
+#   vault_s3_bucket, vault_dynamo_table, vault_kms_key_id, aws_region, project_name
+
+- name: Configure Vault servers
+  hosts: vault_servers
+  become: true
+  gather_facts: true
+  serial: 1   # Rolling update — configure one node at a time
+
+  vars:
+    vault_version: "1.15.6"
+    vault_user: "vault"
+    vault_group: "vault"
+    vault_config_dir: "/etc/vault.d"
+    vault_data_dir: "/opt/vault/data"
+    vault_log_dir: "/var/log/vault"
+    vault_bin: "/usr/local/bin/vault"
+    vault_port_api: 8200
+    vault_port_cluster: 8201
+    vault_aws_region: "{{ aws_region | default('us-east-1') }}"
+
+  pre_tasks:
+    - name: Wait for SSH to become available
+      ansible.builtin.wait_for_connection:
+        delay: 10
+        timeout: 120
+
+    - name: Gather facts after SSH ready
+      ansible.builtin.setup:
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+      retries: 5
+      delay: 10
+      until: true
+
+  roles:
+    - common
+    - vault
+
+  post_tasks:
+    - name: Flush handlers to ensure Vault is restarted before health check
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for Vault API to respond
+      ansible.builtin.wait_for:
+        port: "{{ vault_port_api }}"
+        host: "{{ ansible_host }}"
+        delay: 5
+        timeout: 60
+        state: started
